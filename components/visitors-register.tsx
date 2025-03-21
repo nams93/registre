@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { VisitorForm } from "@/components/visitor-form"
 import { VisitorsList } from "@/components/visitors-list"
 import { VisitorSearch } from "@/components/visitor-search"
@@ -8,14 +8,32 @@ import { Traceability } from "@/components/traceability"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { Visitor } from "@/types/visitor"
 import { visitPurposeLabels } from "@/types/visit-purpose"
+import { saveVisitors, getVisitors } from "@/lib/storage-service"
 
 export default function VisitorsRegister() {
   const [visitors, setVisitors] = useState<Visitor[]>([])
   const [searchResults, setSearchResults] = useState<Visitor[]>([])
   const [isSearching, setIsSearching] = useState(false)
+  const [activeTab, setActiveTab] = useState("register")
+
+  // Charger les visiteurs depuis le localStorage au chargement initial
+  useEffect(() => {
+    const savedVisitors = getVisitors()
+    if (savedVisitors.length > 0) {
+      setVisitors(savedVisitors)
+    }
+  }, [])
+
+  // Sauvegarder les visiteurs dans le localStorage à chaque modification
+  useEffect(() => {
+    if (visitors.length > 0) {
+      saveVisitors(visitors)
+    }
+  }, [visitors])
 
   const addVisitor = (visitor: Visitor) => {
-    setVisitors([...visitors, { ...visitor, id: Date.now().toString() }])
+    const newVisitors = [...visitors, { ...visitor, id: Date.now().toString() }]
+    setVisitors(newVisitors)
   }
 
   const handleSearch = (query: string) => {
@@ -45,7 +63,7 @@ export default function VisitorsRegister() {
 
   return (
     <div className="space-y-8">
-      <Tabs defaultValue="register" className="w-full">
+      <Tabs defaultValue="register" className="w-full" value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="register">Enregistrer</TabsTrigger>
           <TabsTrigger value="list">Liste des Visiteurs</TabsTrigger>

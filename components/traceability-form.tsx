@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -19,6 +19,9 @@ import { cn } from "@/lib/utils"
 import { toast } from "@/hooks/use-toast"
 import type { TraceabilityEvent, EventType } from "@/types/traceability"
 import type { Visitor } from "@/types/visitor"
+import { saveTraceabilityFormDraft, getTraceabilityFormDraft, clearTraceabilityFormDraft } from "@/lib/storage-service"
+// Ajouter l'import pour AutoSaveIndicator
+import { AutoSaveIndicator } from "./auto-save-indicator"
 
 const formSchema = z.object({
   visitorName: z.string().min(2, { message: "Le nom doit contenir au moins 2 caractères" }),
@@ -27,6 +30,7 @@ const formSchema = z.object({
   }),
   description: z.string().min(5, { message: "La description doit contenir au moins 5 caractères" }),
   date: z.date({ required_error: "La date est requise" }),
+  visitorId: z.string().optional(),
 })
 
 type TraceabilityFormProps = {
@@ -42,7 +46,7 @@ const eventTypeLabels: Record<EventType, string> = {
 }
 
 export function TraceabilityForm({ onAddEvent, visitors }: TraceabilityFormProps) {
-  const [selectedVisitorId, setSelectedVisitorId] = useState<string | null>(null)
+  const [formChanged, setFormChanged] = useState(false)
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -51,13 +55,41 @@ export function TraceabilityForm({ onAddEvent, visitors }: TraceabilityFormProps
       eventType: "badge_lost" as EventType,
       description: "",
       date: new Date(),
+      visitorId: undefined,
     },
   })
+
+  // Charger le brouillon du formulaire au chargement initial
+  useEffect(() => {
+    const draft = getTraceabilityFormDraft()
+    if (draft) {
+      // Remplir le formulaire avec les données du brouillon
+      Object.keys(draft).forEach((key) => {
+        form.setValue(key as any, draft[key])
+      })
+    }
+  }, [form])
+
+  // Sauvegarder le brouillon du formulaire à chaque modification
+  useEffect(() => {
+    if (formChanged) {
+      const values = form.getValues()
+      saveTraceabilityFormDraft(values)
+    }
+  }, [form, formChanged])
+
+  // Détecter les changements dans le formulaire
+  useEffect(() => {
+    const subscription = form.watch(() => {
+      setFormChanged(true)
+    })
+    return () => subscription.unsubscribe()
+  }, [form])
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     const event: TraceabilityEvent = {
       id: Date.now().toString(),
-      visitorId: selectedVisitorId || undefined,
+      visitorId: values.visitorId,
       visitorName: values.visitorName,
       eventType: values.eventType,
       description: values.description,
@@ -73,42 +105,63 @@ export function TraceabilityForm({ onAddEvent, visitors }: TraceabilityFormProps
       description: `L'événement a été ajouté à la traçabilité.`,
     })
 
+    // Réinitialiser le formulaire et supprimer le brouillon
     form.reset()
-    setSelectedVisitorId(null)
+    clearTraceabilityFormDraft()
+    setFormChanged(false)
   }
 
   // Fonction pour remplir automatiquement le nom du visiteur lorsqu'on sélectionne un visiteur existant
   const handleVisitorSelect = (visitorId: string) => {
-    setSelectedVisitorId(visitorId)
+    form.setValue("visitorId", visitorId)
     const visitor = visitors.find((v) => v.id === visitorId)
     if (visitor) {
       form.setValue("visitorName", visitor.name)
+      setFormChanged(true)
     }
   }
 
   return (
     <div className="rounded-lg border p-6 shadow-sm card-with-bg">
-      <h2 className="text-xl font-semibold mb-6">Enregistrer un nouvel événement</h2>
+      <h2 className="text-xl font-semibold mb-6">
+        Enregistrer un nouvel événement
+        <AutoSaveIndicator saving={formChanged} className="ml-2 inline-flex" />
+      </h2>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <FormLabel>Visiteur concerné (optionnel)</FormLabel>
-              <Select onValueChange={handleVisitorSelect}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Sélectionner un visiteur existant" />
-                </SelectTrigger>
-                <SelectContent>
-                  {visitors.map((visitor) => (
-                    <SelectItem key={visitor.id} value={visitor.id}>
-                      {visitor.name} ({visitor.company})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-sm text-muted-foreground">Ou saisissez manuellement le nom ci-dessous</p>
-            </div>
+            <FormField
+              control={form.control}
+              name="visitorId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Visiteur concerné (optionnel)</FormLabel>
+                  <Select
+                    onValueChange={(value) => {
+                      field.onChange(value)
+                      handleVisitorSelect(value)
+                    }}
+                    value={field.value}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Sélectionner un visiteur existant" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {visitors.map((visitor) => (
+                        <SelectItem key={visitor.id} value={visitor.id}>
+                          {visitor.name} ({visitor.company})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">Ou saisissez manuellement le nom ci-dessous</p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}
@@ -201,9 +254,22 @@ export function TraceabilityForm({ onAddEvent, visitors }: TraceabilityFormProps
             </div>
           </div>
 
-          <Button type="submit" className="w-full">
-            Enregistrer l'événement
-          </Button>
+          <div className="flex gap-4">
+            <Button type="submit" className="flex-1">
+              Enregistrer l'événement
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                form.reset()
+                clearTraceabilityFormDraft()
+                setFormChanged(false)
+              }}
+            >
+              Réinitialiser
+            </Button>
+          </div>
         </form>
       </Form>
     </div>

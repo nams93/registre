@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -24,6 +24,10 @@ import type { VisitPurposeType } from "@/types/visit-purpose"
 import { visitPurposeLabels } from "@/types/visit-purpose"
 // Ajouter l'import pour Select
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+// Importer les fonctions de stockage
+import { saveVisitorFormDraft, getVisitorFormDraft, clearVisitorFormDraft } from "@/lib/storage-service"
+// Ajouter l'import pour AutoSaveIndicator
+import { AutoSaveIndicator } from "./auto-save-indicator"
 
 // Mettre à jour le schéma de validation
 const formSchema = z.object({
@@ -47,6 +51,7 @@ type VisitorFormProps = {
 
 export function VisitorForm({ onAddVisitor }: VisitorFormProps) {
   const [time, setTime] = useState<string>(format(new Date(), "HH:mm"))
+  const [formChanged, setFormChanged] = useState(false)
 
   // Dans les valeurs par défaut du formulaire
   const form = useForm<z.infer<typeof formSchema>>({
@@ -65,6 +70,41 @@ export function VisitorForm({ onAddVisitor }: VisitorFormProps) {
     },
   })
 
+  // Charger le brouillon du formulaire au chargement initial
+  useEffect(() => {
+    const draft = getVisitorFormDraft()
+    if (draft) {
+      // Remplir le formulaire avec les données du brouillon
+      Object.keys(draft).forEach((key) => {
+        if (key === "time") {
+          setTime(draft[key])
+        } else {
+          form.setValue(key as any, draft[key])
+        }
+      })
+    }
+  }, [form])
+
+  // Sauvegarder le brouillon du formulaire à chaque modification
+  useEffect(() => {
+    if (formChanged) {
+      const values = form.getValues()
+      const draft = {
+        ...values,
+        time,
+      }
+      saveVisitorFormDraft(draft)
+    }
+  }, [form, time, formChanged])
+
+  // Détecter les changements dans le formulaire
+  useEffect(() => {
+    const subscription = form.watch(() => {
+      setFormChanged(true)
+    })
+    return () => subscription.unsubscribe()
+  }, [form])
+
   function onSubmit(values: z.infer<typeof formSchema>) {
     const visitor: Visitor = {
       id: "",
@@ -80,13 +120,19 @@ export function VisitorForm({ onAddVisitor }: VisitorFormProps) {
       description: `${values.name} a été ajouté au registre.`,
     })
 
+    // Réinitialiser le formulaire et supprimer le brouillon
     form.reset()
     setTime(format(new Date(), "HH:mm"))
+    clearVisitorFormDraft()
+    setFormChanged(false)
   }
 
   return (
     <div className="rounded-lg border p-6 shadow-sm card-with-bg">
-      <h2 className="text-xl font-semibold mb-6">Enregistrer un nouveau visiteur</h2>
+      <h2 className="text-xl font-semibold mb-6">
+        Enregistrer un nouveau visiteur
+        <AutoSaveIndicator saving={formChanged} className="ml-2 inline-flex" />
+      </h2>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
@@ -199,7 +245,10 @@ export function VisitorForm({ onAddVisitor }: VisitorFormProps) {
                   id="time"
                   type="time"
                   value={time}
-                  onChange={(e) => setTime(e.target.value)}
+                  onChange={(e) => {
+                    setTime(e.target.value)
+                    setFormChanged(true)
+                  }}
                   className="w-full"
                 />
                 <Clock className="ml-2 h-4 w-4 text-muted-foreground" />
@@ -271,7 +320,13 @@ export function VisitorForm({ onAddVisitor }: VisitorFormProps) {
                   <FormItem>
                     <FormLabel>Signature</FormLabel>
                     <FormControl>
-                      <SignaturePad value={field.value} onChange={field.onChange} />
+                      <SignaturePad
+                        value={field.value}
+                        onChange={(value) => {
+                          field.onChange(value)
+                          setFormChanged(true)
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -280,9 +335,23 @@ export function VisitorForm({ onAddVisitor }: VisitorFormProps) {
             </div>
           </div>
 
-          <Button type="submit" className="w-full">
-            Enregistrer le visiteur
-          </Button>
+          <div className="flex gap-4">
+            <Button type="submit" className="flex-1">
+              Enregistrer le visiteur
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                form.reset()
+                setTime(format(new Date(), "HH:mm"))
+                clearVisitorFormDraft()
+                setFormChanged(false)
+              }}
+            >
+              Réinitialiser
+            </Button>
+          </div>
         </form>
       </Form>
     </div>
